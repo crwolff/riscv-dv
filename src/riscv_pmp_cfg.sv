@@ -85,8 +85,17 @@ class riscv_pmp_cfg extends uvm_object;
 
   constraint grain_addr_mode_c {
     foreach (pmp_cfg[i]) {
+`ifdef VIVADO
+      if (pmp_granularity == 0) {
+        (pmp_cfg[i].a != NAPOT);
+      }
+      if (pmp_granularity >= 1) {
+        (pmp_cfg[i].a != NA4);
+      }
+`else
       (pmp_granularity == 0) -> (pmp_cfg[i].a != NAPOT);
       (pmp_granularity >= 1) -> (pmp_cfg[i].a != NA4);
+`endif
     }
   }
 

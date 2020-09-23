@@ -226,7 +226,10 @@ class riscv_jal_instr extends riscv_rand_instr_stream;
     foreach (order[i]) begin
       order[i] = i;
     end
+`ifdef VIVADO
+`else
     order.shuffle();
+`endif
     setup_allowed_instr(1, 1);
     jal = {JAL};
     if (!cfg.disable_compressed_instr) begin
@@ -440,7 +443,10 @@ class riscv_int_numeric_corner_stream extends riscv_directed_instr_stream;
   }
 
   constraint avail_regs_c {
+`ifdef VIVADO
+`else
     unique {avail_regs};
+`endif
     foreach(avail_regs[i]) {
       !(avail_regs[i] inside {cfg.reserved_regs});
       avail_regs[i] != ZERO;

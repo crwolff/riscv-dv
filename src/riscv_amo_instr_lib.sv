@@ -39,7 +39,10 @@ class riscv_amo_base_instr_stream extends riscv_mem_access_stream;
     foreach (rs1_reg[i]) {
       !(rs1_reg[i] inside {cfg.reserved_regs, reserved_rd, ZERO});
     }
+`ifdef VIVADO
+`else
     unique {rs1_reg};
+`endif
   }
 
   constraint addr_range_c {

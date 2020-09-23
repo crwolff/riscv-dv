@@ -427,7 +427,10 @@ class riscv_instr_gen_config extends uvm_object;
     foreach (gpr[i]) {
       !(gpr[i] inside {sp, tp, scratch_reg, pmp_reg, ZERO, RA, GP});
     }
+`ifdef VIVADO
+`else
     unique {gpr};
+`endif
   }
 
   constraint addr_translaction_rnd_order_c {

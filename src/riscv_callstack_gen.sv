@@ -31,7 +31,10 @@ class riscv_program extends uvm_object;
   rand program_id_t  sub_program_id[];
 
   constraint legal_c {
+`ifdef VIVADO
+`else
     unique{sub_program_id};
+`endif
     foreach(sub_program_id[i]) {
       // Cannot call itself, recursive function call is not supported
       sub_program_id[i] != program_id;
@@ -165,7 +168,10 @@ class riscv_callstack_gen extends uvm_object;
             sub_program_id_pool[j] inside {next_program_list};
           }
         })
+`ifdef VIVADO
+`else
       sub_program_id_pool.shuffle();
+`endif
       sub_program_cnt = new[program_list.size()];
       `uvm_info(get_full_name(), $sformatf("%0d programs @Lv%0d-> %0d programs at next level",
                 program_list.size(), i, sub_program_id_pool.size()), UVM_LOW)

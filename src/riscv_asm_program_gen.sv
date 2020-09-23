@@ -302,7 +302,10 @@ class riscv_asm_program_gen extends uvm_object;
 
   virtual function void insert_sub_program(ref riscv_instr_sequence sub_program[],
                                            ref string instr_list[$]);
+`ifdef VIVADO
+`else
     sub_program.shuffle();
+`endif
     foreach(sub_program[i]) begin
       sub_program[i].post_process_instr();
       sub_program[i].generate_instr_stream();
@@ -1584,7 +1587,10 @@ class riscv_asm_program_gen extends uvm_object;
         idx++;
       end
     end
+`ifdef VIVADO
+`else
     instr_stream.shuffle();
+`endif
   endfunction
 
   //---------------------------------------------------------------------------------------

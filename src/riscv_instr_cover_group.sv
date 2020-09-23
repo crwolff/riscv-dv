@@ -1273,7 +1273,7 @@ class riscv_instr_cover_group;
 
   covergroup rv32i_misc_cg with function sample(riscv_instr instr);
     cp_misc : coverpoint instr.instr_name {
-      bins instr[] = {FENCE, FENCE_I, EBREAK, ECALL, MRET};
+      bins instr_[] = {FENCE, FENCE_I, EBREAK, ECALL, MRET};
     }
   endgroup
 

@@ -48,7 +48,10 @@ class riscv_loop_instr extends riscv_rand_instr_stream;
         loop_limit_reg[i] != cfg.reserved_regs[j];
       }
     }
+`ifdef VIVADO
+`else
     unique {loop_cnt_reg, loop_limit_reg};
+`endif
     loop_cnt_reg.size() == num_of_nested_loop;
     loop_limit_reg.size() == num_of_nested_loop;
   }

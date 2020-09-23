@@ -194,7 +194,10 @@ class riscv_instr_sequence extends uvm_sequence;
         branch_cnt++;
         if (branch_cnt == branch_idx.size()) begin
           branch_cnt = 0;
+`ifdef VIVADO
+`else
           branch_idx.shuffle();
+`endif
         end
         `uvm_info(get_full_name(),
                   $sformatf("Processing branch instruction[%0d]:%0s # %0d -> %0d",
