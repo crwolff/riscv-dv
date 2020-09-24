@@ -157,4 +157,4 @@
               riscv_instr_gen_tb_top"
   sim:
     cmd: >
-      xsim -R -log <out>/simulate.log <sim_opts> -sv_seed <seed>
+      xshim xsim -R -sv_seed <seed> riscv_instr_gen_tb_top <sim_opts>
