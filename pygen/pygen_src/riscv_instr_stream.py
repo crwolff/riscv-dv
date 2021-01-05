@@ -15,8 +15,8 @@ import logging
 import sys
 import vsc
 from pygen_src.riscv_instr_pkg import riscv_instr_name_t,\
-    riscv_instr_category_t, riscv_reg_t
-from pygen_src.isa.riscv_instr import riscv_instr, riscv_instr_ins
+    riscv_instr_category_t, riscv_instr_format_t, riscv_reg_t
+from pygen_src.isa.riscv_instr import riscv_instr
 from pygen_src.riscv_instr_gen_config import cfg
 
 
@@ -34,10 +34,10 @@ class riscv_instr_stream:
         self.instr_cnt = 0
         self.label = ""
         # User can specify a small group of available registers to generate various hazard condition
-        self.avail_regs = vsc.rand_list_t(vsc.enum_t(riscv_reg_t), sz = 10)
+        self.avail_regs = vsc.randsz_list_t(vsc.enum_t(riscv_reg_t))
         # Some additional reserved registers that should not be used as rd register
         # by this instruction stream
-        self.reserved_rd = []
+        self.reserved_rd = vsc.list_t(vsc.enum_t(riscv_reg_t))
         self.hart = 0
 
     def initialize_instr_list(self, instr_cnt):
@@ -165,25 +165,39 @@ class riscv_rand_instr_stream(riscv_instr_stream):
         self.allowed_instr = []
         self.category_dist = []
 
+    @vsc.constraint
+    def avail_reg_c(self):
+        self.avail_regs.size == 10
+
     def create_instr_instance(self):
         for i in range(self.instr_cnt):
             self.instr_list.append(None)
 
     def setup_allowed_instr(self, no_branch = 0, no_load_store = 1):
-        self.allowed_instr = riscv_instr_ins.basic_instr
+        self.allowed_instr = riscv_instr.basic_instr
         if no_branch == 0:
             self.allowed_instr.extend(
-                riscv_instr_ins.instr_category[riscv_instr_category_t.BRANCH.name])
+                riscv_instr.instr_category[riscv_instr_category_t.BRANCH.name])
         if no_load_store == 0:
             self.allowed_instr.extend(
-                riscv_instr_ins.instr_category[riscv_instr_category_t.LOAD.name])
+                riscv_instr.instr_category[riscv_instr_category_t.LOAD.name])
             self.allowed_instr.extend(
-                riscv_instr_ins.instr_category[riscv_instr_category_t.STORE.name])
+                riscv_instr.instr_category[riscv_instr_category_t.STORE.name])
         self.setup_instruction_dist(no_branch, no_load_store)
 
-    # TODO
     def randomize_avail_regs(self):
-        pass
+        if self.avail_regs.size > 0:
+            try:
+                with vsc.randomize_with(self.avail_regs):
+                    vsc.unique(self.avail_regs)
+                    self.avail_regs[0].inside(vsc.rangelist(vsc.rng(riscv_reg_t.S0,
+                                                                    riscv_reg_t.A5)))
+                    with vsc.foreach(self.avail_regs, idx = True) as i:
+                        self.avail_regs[i].not_inside(vsc.rangelist(cfg.reserved_regs,
+                                                      self.reserved_rd))
+            except Exception:
+                logging.critical("Cannot randomize avail_regs")
+                sys.exit(1)
 
     def setup_instruction_dist(self, no_branch = 0, no_load_store = 1):
         if cfg.dist_control_mode:
@@ -204,7 +218,7 @@ class riscv_rand_instr_stream(riscv_instr_stream):
             if len(self.instr_list) == 0:
                 break
 
-    def randomize_instr(self, instr, is_in_debug = 0):
+    def randomize_instr(self, instr, is_in_debug = 0, disable_dist = 0, include_group = []):
         exclude_instr = []
         is_SP_in_reserved_rd = riscv_reg_t.SP in self.reserved_rd
         is_SP_in_reserved_regs = riscv_reg_t.SP in cfg.reserved_regs
@@ -219,22 +233,36 @@ class riscv_rand_instr_stream(riscv_instr_stream):
         # adding ebreak instructions into the debug ROM.
         if is_in_debug:
             if (cfg.no_ebreak and cfg.enable_ebreak_in_debug_rom):
-                allowed_instr.extend([riscv_instr_name_t.EBREAK.name,
-                                      riscv_instr_name_t.C_EBREAK.name])
+                self.allowed_instr.extend([riscv_instr_name_t.EBREAK.name,
+                                           riscv_instr_name_t.C_EBREAK.name])
             elif (not cfg.no_ebreak and not cfg.enable_ebreak_in_debug_rom):
                 exclude_instr.extend([riscv_instr_name_t.EBREAK.name,
                                       riscv_instr_name_t.C_EBREAK.name])
-        instr = riscv_instr_ins.get_rand_instr(
-            include_instr = self.allowed_instr, exclude_instr = exclude_instr)
+        instr = riscv_instr.get_rand_instr(
+            include_instr = self.allowed_instr, exclude_instr = exclude_instr,
+            include_group = include_group)
         instr = self.randomize_gpr(instr)
         return instr
 
     def randomize_gpr(self, instr):
-        # TODO
-        """
-        PyVSC library doesn't support inline randomization for list of enum types.
-        The randomization is done directly here.
-        it will be updated once randomization for list of enum types supports in PyVSC.
-        """
-        instr.randomize()
+        with instr.randomize_with() as it:
+            with vsc.if_then(self.avail_regs.size > 0):
+                with vsc.if_then(instr.has_rs1):
+                    instr.rs1.inside(vsc.rangelist(self.avail_regs))
+                with vsc.if_then(instr.has_rs2):
+                    instr.rs2.inside(vsc.rangelist(self.avail_regs))
+                with vsc.if_then(instr.has_rd):
+                    instr.rd.inside(vsc.rangelist(self.avail_regs))
+            with vsc.foreach(self.reserved_rd, idx = True) as i:
+                with vsc.if_then(instr.has_rd):
+                    instr.rd != self.reserved_rd[i]
+                with vsc.if_then(instr.format == riscv_instr_format_t.CB_FORMAT):
+                    instr.rs1 != self.reserved_rd[i]
+
+            with vsc.foreach(cfg.reserved_regs, idx = True) as i:
+                with vsc.if_then(instr.has_rd):
+                    instr.rd != cfg.reserved_regs[i]
+                with vsc.if_then(instr.format == riscv_instr_format_t.CB_FORMAT):
+                    instr.rs1 != cfg.reserved_regs[i]
+        # TODO: Add constraint for CSR, floating point register
         return instr

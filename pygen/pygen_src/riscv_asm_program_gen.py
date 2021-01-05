@@ -16,13 +16,19 @@ import logging
 import random
 import copy
 import sys
-from bitstring import BitArray
+import vsc
+from importlib import import_module
 from pygen_src.riscv_instr_sequence import riscv_instr_sequence
-from pygen_src.riscv_instr_pkg import pkg_ins, privileged_reg_t, privileged_mode_t, mtvec_mode_t
+from pygen_src.riscv_instr_pkg import (pkg_ins, privileged_reg_t,
+                                       privileged_mode_t, mtvec_mode_t,
+                                       misa_ext_t, riscv_instr_group_t,
+                                       satp_mode_t)
 from pygen_src.riscv_instr_gen_config import cfg
-from pygen_src.target.rv32i import riscv_core_setting as rcs
 from pygen_src.riscv_data_page_gen import riscv_data_page_gen
+from pygen_src.riscv_privileged_common_seq import riscv_privileged_common_seq
 from pygen_src.riscv_utils import factory
+rcs = import_module("pygen_src.target." + cfg.argv.target + ".riscv_core_setting")
+
 '''
     RISC-V assembly program generator
 
@@ -54,7 +60,7 @@ class riscv_asm_program_gen:
             # Commenting out for now
             # sub_program_name = []
             self.instr_stream.append(f"h{int(hart)}_start:")
-            if(not(cfg.bare_program_mode)):
+            if not cfg.bare_program_mode:
                 self.setup_misa()
                 # Create all page tables
                 self.create_page_table(hart)
@@ -89,7 +95,8 @@ class riscv_asm_program_gen:
             self.main_program[hart].label_name = label_name
             self.generate_directed_instr_stream(hart=hart,
                                                 label=self.main_program[hart].label_name,
-                                                original_instr_cnt=self.main_program[hart].instr_cnt,
+                                                original_instr_cnt=
+                                                    self.main_program[hart].instr_cnt,
                                                 min_insert_cnt=1,
                                                 instr_stream=self.main_program[hart].directed_instr)
             self.main_program[hart].gen_instr(is_main_program=1, no_branch=cfg.no_branch_jump)
@@ -118,16 +125,16 @@ class riscv_asm_program_gen:
                 self.gen_data_page_begin(hart)
                 if not cfg.no_data_page:
                     self.gen_data_page(hart)
-
-                    if((hart == 0) and ("RV32A" in rcs.supported_isa)):
+                    if(hart == 0 and riscv_instr_group_t.RV32A
+                                         in rcs.supported_isa):
                         self.gen_data_page(hart, amo = 1)
 
             self.gen_stack_section(hart)
-            if(not cfg.bare_program_mode):
+            if not cfg.bare_program_mode:
                 self.gen_kernel_sections(hart)
 
     def gen_kernel_sections(self, hart):
-        if(rcs.SATP_MODE != "BARE"):
+        if rcs.SATP_MODE != satp_mode_t.BARE:
             self.instr_stream.append(".align 12")
         else:
             self.instr_stream.append(".align 2")
@@ -137,7 +144,7 @@ class riscv_asm_program_gen:
         self.gen_all_trap_handler(hart)
         for mode in rcs.supported_privileged_mode:
             self.gen_interrupt_handler_section(mode, hart)
-
+        self.instr_stream.append(pkg_ins.get_label("kernel_instr_end: nop", hart))
         self.gen_kernel_stack_section(hart)
 
     def gen_kernel_program(self, hart, seq):
@@ -160,7 +167,7 @@ class riscv_asm_program_gen:
         self.instr_stream.append(".include \"user_define.h\"")
         self.instr_stream.append(".globl _start")
         self.instr_stream.append(".section .text")
-        if(cfg.disable_compressed_instr):
+        if cfg.disable_compressed_instr:
             self.instr_stream.append(".option norvc;")
         string.append(".include \"user_init.s\"")
         string.append("csrr x5, mhartid")
@@ -174,13 +181,13 @@ class riscv_asm_program_gen:
             self.instr_stream.append("{}: j h{}_start".format(hart, hart))
 
     def gen_program_end(self, hart):
-        if(hart == 0):
+        if hart == 0:
             self.gen_section("write_tohost", ["sw gp, tohost, t5"])
             self.gen_section("_exit", ["j write_tohost"])
 
     def gen_data_page_begin(self, hart):
         self.instr_stream.append(".section .data")
-        if (hart == 0):
+        if hart == 0:
             self.instr_stream.append(".align 6; .global tohost; tohost: .dword 0;")
             self.instr_stream.append(".align 6; .global fromhost; fromhost: .dword 0;")
 
@@ -191,35 +198,35 @@ class riscv_asm_program_gen:
 
     def gen_stack_section(self, hart):
         hart_prefix_string = pkg_ins.hart_prefix(hart)
-        if(cfg.use_push_data_section):
+        if cfg.use_push_data_section:
             self.instr_stream.append(
                 ".pushsection .{}user_stack,\"aw\",@progbits;".format(hart_prefix_string))
         else:
             self.instr_stream.append(
                 ".section .{}user_stack,\"aw\",@progbits;".format(hart_prefix_string))
-        if(rcs.SATP_MODE != "BARE"):
+        if rcs.SATP_MODE != satp_mode_t.BARE:
             self.instr_stream.append(".align 12")
         else:
             self.instr_stream.append(".align 2")
 
         self.instr_stream.append(pkg_ins.get_label("user_stack_start:", hart))
-        self.instr_stream.append(".rept {}".format(cfg.kernel_stack_len - 1))
+        self.instr_stream.append(".rept {}".format(cfg.stack_len - 1))
         self.instr_stream.append(".{}byte 0x0".format(rcs.XLEN // 8))
         self.instr_stream.append(".endr")
         self.instr_stream.append(pkg_ins.get_label("user_stack_end:", hart))
         self.instr_stream.append(".{}byte 0x0".format(rcs.XLEN // 8))
-        if (cfg.use_push_data_section):
+        if cfg.use_push_data_section:
             self.instr_stream.push_back(".popsection;")
 
     def gen_kernel_stack_section(self, hart):
         hart_prefix_string = pkg_ins.hart_prefix(hart)
-        if(cfg.use_push_data_section):
+        if cfg.use_push_data_section:
             self.instr_stream.append(
                 ".pushsection .{}kernel_stack,\"aw\",@progbits;".format(hart_prefix_string))
         else:
             self.instr_stream.append(
                 ".section .{}kernel_stack,\"aw\",@progbits;".format(hart_prefix_string))
-        if(rcs.SATP_MODE != "BARE"):
+        if rcs.SATP_MODE != satp_mode_t.BARE:
             self.instr_stream.append(".align 12")
         else:
             self.instr_stream.append(".align 2")
@@ -230,33 +237,79 @@ class riscv_asm_program_gen:
         self.instr_stream.append(".endr")
         self.instr_stream.append(pkg_ins.get_label("kernel_stack_end:", hart))
         self.instr_stream.append(".{}byte 0x0".format(rcs.XLEN // 8))
-        if (cfg.use_push_data_section):
+        if cfg.use_push_data_section:
             self.instr_stream.push_back(".popsection;")
 
     def gen_init_section(self, hart):
         string = pkg_ins.format_string("init:", pkg_ins.LABEL_STR_LEN)
         self.instr_stream.append(string)
+        if cfg.enable_floating_point:
+            self.init_floating_point_gpr()
         self.init_gpr()
         # Init stack pointer to point to the end of the user stack
         string = "{}la x{}, {}user_stack_end".format(
             pkg_ins.indent, cfg.sp.value, pkg_ins.hart_prefix(hart))
         self.instr_stream.append(string)
-        if (cfg.enable_floating_point):
-            self.init_floating_point_gpr()
-        if (cfg.enable_vector_extension):
+        if cfg.enable_vector_extension:
             self.init_vector_engine()
         self.core_is_initialized()
         self.gen_dummy_csr_write()
-
-        if (rcs.support_pmp):
+        if rcs.support_pmp:
             string = pkg_ins.indent + "j main"
             self.instr_stream.append(string)
 
+    # Setup MISA based on supported extensions
     def setup_misa(self):
-        # TO DO
-        misa = 0b01000000
-        self.instr_stream.append("{}li x{}, {}".format(pkg_ins.indent, cfg.gpr[0].value, hex(misa)))
-        self.instr_stream.append("{}csrw misa, x{}".format(pkg_ins.indent, cfg.gpr[0].value))
+        misa = vsc.bit_t(rcs.XLEN)
+        if rcs.XLEN == 32:
+            misa[rcs.XLEN - 1:rcs.XLEN - 2] = 1
+        elif rcs.XLEN == 64:
+            misa[rcs.XLEN - 1:rcs.XLEN - 2] = 2
+        else:
+            misa[rcs.XLEN - 1:rcs.XLEN - 2] = 3
+        if cfg.check_misa_init_val:
+            self.instr_stream.append("{}csrr x15, {}".format(pkg_ins.indent,
+                                                             hex(privileged_reg_t.MISA)))
+        for group in rcs.supported_isa:
+            if group in [riscv_instr_group_t.RV32C,
+                         riscv_instr_group_t.RV64C,
+                         riscv_instr_group_t.RV128C]:
+                misa[misa_ext_t.MISA_EXT_C] = 1
+            elif group in [riscv_instr_group_t.RV32I,
+                           riscv_instr_group_t.RV64I,
+                           riscv_instr_group_t.RV128I]:
+                misa[misa_ext_t.MISA_EXT_I] = 1
+            elif group in [riscv_instr_group_t.RV32M,
+                           riscv_instr_group_t.RV64M]:
+                misa[misa_ext_t.MISA_EXT_M] = 1
+            elif group in [riscv_instr_group_t.RV32A,
+                           riscv_instr_group_t.RV64A]:
+                misa[misa_ext_t.MISA_EXT_A] = 1
+            elif group in [riscv_instr_group_t.RV32B,
+                           riscv_instr_group_t.RV64B]:
+                misa[misa_ext_t.MISA_EXT_B] = 1
+            elif group in [riscv_instr_group_t.RV32F,
+                           riscv_instr_group_t.RV64F,
+                           riscv_instr_group_t.RV32FC]:
+                misa[misa_ext_t.MISA_EXT_F] = 1
+            elif group in [riscv_instr_group_t.RV32D,
+                           riscv_instr_group_t.RV64D,
+                           riscv_instr_group_t.RV32DC]:
+                misa[misa_ext_t.MISA_EXT_D] = 1
+            elif group in [riscv_instr_group_t.RVV]:
+                misa[misa_ext_t.MISA_EXT_V] = 1
+            elif group in [riscv_instr_group_t.RV32X,
+                           riscv_instr_group_t.RV64X]:
+                misa[misa_ext_t.MISA_EXT_X] = 1
+            else:
+                logging.critical("{} is not yet supported".format(group.name))
+                sys.exit(1)
+        if privileged_mode_t.SUPERVISOR_MODE.name in rcs.supported_privileged_mode:
+            misa[misa_ext_t.MISA_EXT_S] = 1
+        self.instr_stream.append("{}li x{}, {}".format(pkg_ins.indent, cfg.gpr[0].value,
+                                                       hex(misa.get_val())))
+        self.instr_stream.append("{}csrw {}, x{}".format(pkg_ins.indent, hex(privileged_reg_t.MISA),
+                                                         cfg.gpr[0].value))
 
     def core_is_initialized(self):
         pass
@@ -265,31 +318,65 @@ class riscv_asm_program_gen:
         pass
 
     def init_gpr(self):
-        reg_val = BitArray(uint = 0, length = pkg_ins.DATA_WIDTH)
-        dist_lst = []
-
-        for dist_val in range(5):
-            if dist_val == 0:
-                reg_val = BitArray(hex='0x0')
-            elif dist_val == 1:
-                reg_val = BitArray(hex='0x80000000')
-            elif dist_val == 2:
-                temp = random.randrange(0x1, 0xf)
-                reg_val = BitArray(hex(temp), length=32)
-            elif dist_val == 3:
-                temp = random.randrange(0x10, 0xefffffff)
-                reg_val = BitArray(hex(temp), length=32)
-            else:
-                temp = random.randrange(0xf0000000, 0xffffffff)
-                reg_val = BitArray(hex(temp), length=32)
-            dist_lst.append(reg_val)
-
-        for i in range(32):
-            init_string = "{}li x{}, {}".format(pkg_ins.indent, i, random.choice(dist_lst))
+        reg_val = vsc.rand_bit_t(pkg_ins.DATA_WIDTH)
+        for i in range(rcs.NUM_GPR):
+            if i in [cfg.sp.value, cfg.tp.value]:
+                continue
+            try:
+                with vsc.randomize_with(reg_val):
+                    vsc.dist(reg_val, [vsc.weight(0, 1), vsc.weight(0x80000000, 1),
+                                       vsc.weight(vsc.rng(0x1, 0xf), 1),
+                                       vsc.weight(vsc.rng(0x10, 0xefffffff), 1),
+                                       vsc.weight(vsc.rng(0xf0000000, 0xffffffff), 1)])
+            except Exception:
+                logging.critical("Cannot Randomize reg_val")
+                sys.exit(1)
+            init_string = "{}li x{}, {}".format(pkg_ins.indent, i, hex(reg_val.get_val()))
             self.instr_stream.append(init_string)
 
     def init_floating_point_gpr(self):
-        pass
+        for i in range(rcs.NUM_FLOAT_GPR):
+            vsc.randselect([
+                (1, lambda: self.init_floating_point_gpr_with_spf(i)),
+                (riscv_instr_group_t.RV64D in rcs.supported_isa,
+                 lambda: self.init_floating_point_gpr_with_dpf(i))])
+        # Initialize rounding mode of FCSR
+        fsrmi_instr = "{}fsrmi {}".format(pkg_ins.indent, cfg.fcsr_rm)
+        self.instr_stream.append(fsrmi_instr)
+
+    def init_floating_point_gpr_with_spf(self, int_floating_gpr):
+        imm = self.get_rand_spf_value()
+        li_instr = "{}li x{}, {}".format(pkg_ins.indent, cfg.gpr[0].value, hex(imm))
+        fmv_instr = "{}fmv.w.x f{}, x{}".format(pkg_ins.indent, int_floating_gpr,
+                                                cfg.gpr[0].value)
+        self.instr_stream.extend((li_instr, fmv_instr))
+
+    def init_floating_point_gpr_with_dpf(self, int_floating_gpr):
+        imm = vsc.bit_t(64)
+        imm = self.get_rand_dpf_value()
+        int_gpr1 = cfg.gpr[0].value
+        int_gpr2 = cfg.gpr[1].value
+
+        li_instr0 = "{}li x{}, {}".format(pkg_ins.indent, int_gpr1, imm[63:32])
+        # shift to upper 32bits
+        for _ in range(2):
+            slli_instr = "{}slli x{}, x{}, 16".format(pkg_ins.indent, int_gpr1, int_gpr1)
+        li_instr1 = "{}li x{}, {}".format(pkg_ins.indent, int_gpr2, imm[31:0])
+        or_instr = "{}or x{}, x{}, x{}".format(pkg_ins.indent, int_gpr2, int_gpr2, int_gpr1)
+        fmv_instr = "{}fmv.d.x f{}, x{}".format(pkg_ins.indent, int_floating_gpr, int_gpr2)
+        self.instr_stream.extend((li_instr0, slli_instr, li_instr1, or_instr, fmv_instr))
+
+    # Get a random single precision floating value
+    def get_rand_spf_value(self):
+        # TODO randcase
+        value = random.randrange(0, 2**32 - 1)
+        return value
+
+    # Get a random double precision floating value
+    def get_rand_dpf_value(self):
+        value = vsc.bit_t(64)
+        # TODO randcase
+        return value
 
     def init_vector_engine(self):
         pass
@@ -299,7 +386,7 @@ class riscv_asm_program_gen:
         self.instr_stream.append(string)
         self.instr_stream.append(pkg_ins.indent + "li gp, 1")
 
-        if(cfg.bare_program_mode):
+        if cfg.bare_program_mode:
             self.instr_stream.append(pkg_ins.indent + "j write_tohost")
         else:
             self.instr_stream.append(pkg_ins.indent + "ecall")
@@ -312,7 +399,7 @@ class riscv_asm_program_gen:
 
         # Generate sw/sd instructions
         for i in range(32):
-            if (rcs.XLEN == 64):
+            if rcs.XLEN == 64:
                 string = "{}sd x{}, {}(x{})".format(
                     pkg_ins.indent, i, i * (rcs.XLEN / 8), cfg.gpr[0].value)
             else:
@@ -332,29 +419,45 @@ class riscv_asm_program_gen:
         self.trap_vector_init(hart)
         self.setup_pmp(hart)
 
-        if(cfg.virtual_addr_translation_on):
+        if cfg.virtual_addr_translation_on:
             self.page_table_list.process_page_table(instr)
             self.gen_section(pkg_ins.get_label("process_pt", hart), instr)
-        # Commenting for now
-        # self.setup_epc(hart)
-
-        if(rcs.support_pmp):
-            self.gen_privileged_mode_switch_routine(hart)
+        self.setup_epc(hart)
+        self.gen_privileged_mode_switch_routine(hart)
 
     def gen_privileged_mode_switch_routine(self, hart):
-        pass
+        privil_seq = riscv_privileged_common_seq()
+        for i in range(len(rcs.supported_privileged_mode)):
+            instr = []
+            csr_handshake = []
+            if rcs.supported_privileged_mode[i] != cfg.init_privileged_mode:
+                continue
+            logging.info("Generating privileged mode routing for {}"
+                         .format(rcs.supported_privileged_mode[i]))
+            # Enter Privileged mode
+            privil_seq.hart = hart
+            privil_seq.randomize()
+            privil_seq.enter_privileged_mode(rcs.supported_privileged_mode[i], instr)
+            # TODO
+            if cfg.require_signature_addr:
+                pass
+        self.instr_stream.extend(instr)
 
     def setup_epc(self, hart):
         instr = []
         instr.append("la x{}, {}init".format(cfg.gpr[0].value, pkg_ins.hart_prefix(hart)))
-        # if(cfg.virtual_addr_translation_on):
-        # instr.append("slli x{}, x{}")
-        # TODO
-        mode_name = cfg.init_privileged_mode
-        instr.append("csrw mepc, x{}".format(cfg.gpr[0].value))
-        if(not rcs.support_pmp):  # TODO
-            instr.append("j {}init_{}".format(pkg_ins.hart_prefix(hart), mode_name.name.lower()))
-
+        if cfg.virtual_addr_translation_on:
+            # For supervisor and user mode, use virtual address instead of physical address.
+            # Virtual address starts from address 0x0, here only the lower 12 bits are kept
+            # as virtual address offset.
+            instr.append("slli x{}, x{}, {}".format(cfg.gpr[0].value,
+                                                    cfg.gpr[0].value, rcs.XLEN - 12) +
+                         "srli x{}, x{}, {}".format(cfg.gpr[0].value,
+                                                    cfg.gpr[0].value, rcs.XLEN - 12))
+        mode_name = cfg.init_privileged_mode.name
+        instr.append("csrw {}, x{}".format(hex(privileged_reg_t.MEPC), cfg.gpr[0].value))
+        if not rcs.support_pmp:
+            instr.append("j {}init_{}".format(pkg_ins.hart_prefix(hart), mode_name.lower()))
         self.gen_section(pkg_ins.get_label("mepc_setup", hart), instr)
 
     def setup_pmp(self, hart):
@@ -364,7 +467,7 @@ class riscv_asm_program_gen:
         self.gen_delegation_instr(hart, "MEDELEG", "MIDELEG",
                                   cfg.m_mode_exception_delegation,
                                   cfg.m_mode_interrupt_delegation)
-        if(rcs.support_umode_trap):
+        if rcs.support_umode_trap:
             self.gen_delegation_instr(hart, "SEDELEG", "SIDELEG",
                                       cfg.s_mode_exception_delegation,
                                       cfg.s_mode_interrupt_delegation)
@@ -375,28 +478,28 @@ class riscv_asm_program_gen:
 
     def trap_vector_init(self, hart):
         instr = []
-        for items in rcs.supported_privileged_mode:
-            if(items == "MACHINE_MODE"):
+        for mode in rcs.supported_privileged_mode:
+            if mode == privileged_mode_t.MACHINE_MODE:
                 trap_vec_reg = privileged_reg_t.MTVEC
-            elif(items == "SUPERVISOR_MODE"):
+            elif mode == privileged_mode_t.SUPERVISOR_MODE:
                 trap_vec_reg = privileged_reg_t.STVEC
-            elif(items == "USER_MODE"):
+            elif mode == privileged_mode_t.USER_MODE:
                 trap_vec_reg = privileged_reg_t.UTVEC
             else:
-                logging.critical(
-                    "[riscv_asm_program_gen] Unsupported privileged_mode {}".format(items))
+                logging.critical("Unsupported privileged_mode {}".format(mode.name))
+                sys.exit(1)
 
-            if(items == "USER_MODE" and not (rcs.support_umode_trap)):
+            if(mode == privileged_mode_t.USER_MODE and not (rcs.support_umode_trap)):
                 continue
 
-            if(items < cfg.init_privileged_mode.name):
+            if mode < cfg.init_privileged_mode:
                 continue
 
             tvec_name = trap_vec_reg.name
             tvec_name = tvec_name.lower()
             instr.append("la x{}, {}{}_handler".format(
                 cfg.gpr[0].value, pkg_ins.hart_prefix(hart), tvec_name))
-            if(rcs.SATP_MODE != "BARE" and items != "MACHINE_MODE"):
+            if(rcs.SATP_MODE != satp_mode_t.BARE and mode != privileged_mode_t.MACHINE_MODE):
                 instr.append("slli x{}, x{}, {}\n".format(cfg.gpr[0].value,
                                                           cfg.gpr[0].value, rcs.XLEN - 20) +
                              "srli x{}, x{}, {}".format(cfg.gpr[0].value,
@@ -410,7 +513,7 @@ class riscv_asm_program_gen:
         self.gen_section(pkg_ins.get_label("trap_vec_init", hart), instr)
 
     def gen_all_trap_handler(self, hart):
-        if(not rcs.support_pmp):
+        if not rcs.support_pmp:
             self.gen_trap_handlers(hart)
             self.gen_ecall_handler(hart)
             self.gen_instr_fault_handler(hart)
@@ -429,7 +532,7 @@ class riscv_asm_program_gen:
         is_interrupt = 1
         tvec_name = ""
         instr = []
-        if (cfg.mtvec_mode == mtvec_mode_t.VECTORED):
+        if cfg.mtvec_mode == mtvec_mode_t.VECTORED:
             self.gen_interrupt_vector_table(hart, mode, status, cause, ie, ip, scratch, instr)
         else:
             # Push user mode GPR to kernel stack before executing exception handling,
@@ -438,10 +541,23 @@ class riscv_asm_program_gen:
             # TODO
             pkg_ins.push_gpr_to_kernel_stack(
                 status, scratch, cfg.mstatus_mprv, cfg.sp, cfg.tp, instr)
+            # Checking xStatus can be optional if ISS (like spike) has different implementation of
+            # certain fields compared with the RTL processor.
+            if cfg.check_xstatus:
+                instr.append("csrr x{}, {} # {}".format(
+                    cfg.gpr[0].value, hex(status.value), status.name))
+            instr.append("csrr x{}, {} # {}\n".format(cfg.gpr[0].value, hex(cause.value),
+                                                      cause.name) +
+                         "{}srli x{}, x{}, {}\n".format(pkg_ins.indent, cfg.gpr[0].value,
+                                                        cfg.gpr[0].value, rcs.XLEN - 1) +
+                         "{}bne x{}, x0, {}{}mode_instr_handler".format(pkg_ins.indent,
+                                                                        cfg.gpr[0].value,
+                                                                        pkg_ins.hart_prefix(hart),
+                                                                        mode))
         # The trap handler will occupy one 4KB page, it will be allocated one entry in
         # the page table with a specific privileged mode.
 
-        if (rcs.SATP_MODE != "BARE"):
+        if rcs.SATP_MODE != satp_mode_t.BARE:
             self.instr_stream.append(".align 12")
         else:
             self.instr_stream.append(".align {}".format(cfg.tvec_alignment))
@@ -450,6 +566,10 @@ class riscv_asm_program_gen:
         self.gen_section(pkg_ins.get_label("{}_handler".format(tvec_name.lower()), hart), instr)
 
         # TODO Exception handler
+        instr = []
+        if cfg.mtvec_mode == mtvec_mode_t.VECTORED:
+            pkg_ins.push_gpr_to_kernel_stack(
+                status, scratch, cfg.mstatus_mprv, cfg.sp, cfg.tp, instr)
 
     def gen_interrupt_vector_table(self, hart, mode, status, cause, ie,
                                    ip, scratch, instr):
@@ -492,46 +612,47 @@ class riscv_asm_program_gen:
 
     def gen_interrupt_handler_section(self, mode, hart):
         interrupt_handler_instr = []
-        ls_unit = "w" if (rcs.XLEN == 32) else "d"
-        # TODO
-        # if(mode.value < cfg.init_privileged_mode):
-        # return
-        if(mode is privileged_mode_t.USER_MODE.name and not (rcs.support_umode_trap)):
+        ls_unit = "w" if rcs.XLEN == 32 else "d"
+        if mode < cfg.init_privileged_mode:
             return
-        if(mode == privileged_mode_t.MACHINE_MODE.name):
+        if(mode is privileged_mode_t.USER_MODE and not (rcs.support_umode_trap)):
+            return
+        if mode == privileged_mode_t.MACHINE_MODE:
             mode_prefix = "m"
             status = privileged_reg_t.MSTATUS
             ip = privileged_reg_t.MIP
             ie = privileged_reg_t.MIE
             scratch = privileged_reg_t.MSCRATCH
-        elif(mode is privileged_mode_t.SUPERVISOR_MODE.name):
+        elif mode is privileged_mode_t.SUPERVISOR_MODE:
             mode_prefix = "s"
             status = privileged_reg_t.SSTATUS
             ip = privileged_reg_t.SIP
             ie = privileged_reg_t.SIE
             scratch = privileged_reg_t.SSCRATCH
-        elif(mode == privileged_mode_t.USER_MODE.name):
+        elif mode == privileged_mode_t.USER_MODE:
             mode_prefix = "u"
             status = privileged_reg_t.USTATUS
             ip = privileged_reg_t.UIP
             ie = privileged_reg_t.UIE
             scratch = privileged_reg_t.USCRATCH
         else:
-            logging.critical("Unsupported mode: %0s" % (mode))
+            logging.critical("Unsupported mode: {}".format(mode.name))
+            sys.exit(1)
 
-        if(cfg.enable_nested_interrupt):
+        if cfg.enable_nested_interrupt:
             interrupt_handler_instr.append("csrr x%0d, 0x%0x" % (cfg.gpr[0].value, scratch.value))
             interrupt_handler_instr.append("bgtz x%0d, 1f" % (cfg.gpr[0].value))
             interrupt_handler_instr.append("csrwi 0x%0x, 0x1" % (scratch.value))
 
-            if(status == privileged_reg_t.MSTATUS):
+            if status == privileged_reg_t.MSTATUS:
                 interrupt_handler_instr.append("csrsi 0x%0x, 0x%0x" % (status.value, 8))
-            elif(status == privileged_reg_t.SSTATUS):
+            elif status == privileged_reg_t.SSTATUS:
                 interrupt_handler_instr.append("csrsi 0x%0x, 0x%0x" % (status.value, 2))
-            elif(status == privileged_reg_t.USTATUS):
+            elif status == privileged_reg_t.USTATUS:
                 interrupt_handler_instr.append("csrsi 0x%0x, 0x%0x" % (status.value, 1))
             else:
-                logging.critical("Unsupported status %0s" % (status.value))
+                logging.critical("Unsupported status {}".format(status.name))
+                sys.exit(1)
 
             interrupt_handler_instr.append("1: csrwi 0x%0x,0" % (scratch.value))
 
@@ -548,23 +669,23 @@ class riscv_asm_program_gen:
                                                                                  ip.name)]
         interrupt_handler_instr.extend(to_extend_interrupt_hanlder_instr)
         self.gen_plic_section(interrupt_handler_instr)
-        pkg_ins.pop_gpr_from_kernel_stack(status.name, scratch.name, cfg.mstatus_mprv,
+        pkg_ins.pop_gpr_from_kernel_stack(status, scratch, cfg.mstatus_mprv,
                                           cfg.sp, cfg.tp, interrupt_handler_instr)
         interrupt_handler_instr.append("%0sret;" % (mode_prefix))
 
-        if(rcs.SATP_MODE != "BARE"):
+        if rcs.SATP_MODE != satp_mode_t.BARE:
             self.instr_stream.append(".align 12")
         else:
             self.instr_stream.append(".align 2")
 
-        self.gen_section(pkg_ins.get_label("%0smode_intr_handler" %
+        self.gen_section(pkg_ins.get_label("%0smode_instr_handler" %
                                            (mode_prefix), hart), interrupt_handler_instr)
 
     def format_section(self, instr):
         pass
 
     def gen_section(self, label, instr):
-        if(label != ""):
+        if label != "":
             string = pkg_ins.format_string("{}:".format(label), pkg_ins.LABEL_STR_LEN)
             self.instr_stream.append(string)
         for items in instr:
@@ -615,12 +736,12 @@ class riscv_asm_program_gen:
                                        min_insert_cnt = 0, kernel_mode = 0, instr_stream = []):
         instr_insert_cnt = 0
         idx = 0
-        if(cfg.no_directed_instr):
+        if cfg.no_directed_instr:
             return
         for instr_stream_name in self.directed_instr_stream_ratio:
             instr_insert_cnt = int(original_instr_cnt *
                                    self.directed_instr_stream_ratio[instr_stream_name] // 1000)
-            if(instr_insert_cnt <= min_insert_cnt):
+            if instr_insert_cnt <= min_insert_cnt:
                 instr_insert_cnt = min_insert_cnt
             logging.info("Insert directed instr stream %0s %0d/%0d times",
                          instr_stream_name, instr_insert_cnt, original_instr_cnt)
@@ -628,11 +749,11 @@ class riscv_asm_program_gen:
                 name = "{}_{}".format(instr_stream_name, i)
                 object_h = factory(instr_stream_name)
                 object_h.name = name
-                if(object_h is None):
+                if not object_h:
                     logging.critical("Cannot create instr stream %0s", name)
                     sys.exit(1)
                 new_instr_stream = copy.deepcopy(object_h)
-                if(new_instr_stream):
+                if new_instr_stream:
                     new_instr_stream.hart = hart
                     new_instr_stream.label = "{}_{}".format(label, idx)
                     new_instr_stream.kernel_mode = kernel_mode
