@@ -34,7 +34,7 @@ unsupported_instr = []
 
 # ISA supported by the processor
 supported_isa = [riscv_instr_group_t.RV32I, riscv_instr_group_t.RV32M,
-                 riscv_instr_group_t.RV32C, riscv_instr_group_t.RV32B]
+                 riscv_instr_group_t.RV32C, riscv_instr_group_t.RV32A]
 
 # Interrupt mode support
 supported_interrupt_mode = [mtvec_mode_t.DIRECT, mtvec_mode_t.VECTORED]
@@ -90,7 +90,7 @@ MAX_LMUL = 8
 # -----------------------------------------------------------------------------
 
 # Number of harts
-NUM_HARTS = 1
+NUM_HARTS = 2
 
 # -----------------------------------------------------------------------------
 # Previleged CSR implementation
